@@ -1,0 +1,19 @@
+[Unit]
+Description=Corsair H150i ELITE LCD XT screen
+# Wait for USB to settle after boot/resume.
+After=multi-user.target suspend.target hibernate.target hybrid-sleep.target
+
+[Service]
+Type=simple
+# Edit the path and the command to taste. Runs as root, so it has hidraw
+# access without any udev rule. Keep --watch so the screen is held.
+ExecStart=/usr/bin/python3 /path/to/cooler-display/h150i-lcd.py clock --watch
+# Other examples (pick one):
+# ExecStart=/usr/bin/python3 /path/to/cooler-display/h150i-lcd.py cores --watch
+# ExecStart=/usr/bin/python3 /path/to/cooler-display/h150i-lcd.py text "Hello 42C" --watch --interval 1
+# ExecStart=/usr/bin/python3 /path/to/cooler-display/h150i-lcd.py image /path/to/photo.png --watch
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
