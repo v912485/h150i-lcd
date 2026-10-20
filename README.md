@@ -18,6 +18,10 @@ text to a 480×480 image and uploading that.
 - **`image`** — show any image file (cover-fit and center-cropped)
 - **`cores`** — live per-core CPU load as a radial "reactor dial" with an average hub
 - **`clock`** — an analog clock with ticking (or sweeping) hands
+- **`usage`** — your Claude Code token usage, displayed with (comical) flair — pick a
+  style: burning money, a thirsty robot, a fuel gauge, or a doomsday counter
+- **`power`** — live CPU + GPU power draw, styled as an old electricity meter with a
+  spinning disc and a rolling Wh register
 - **`brightness`** / **`rotate`** — adjust the panel
 
 ## Requirements
@@ -59,12 +63,53 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0c33", MODE="06
 ./h150i-lcd.py clock --watch          # ticking analog clock
 ./h150i-lcd.py clock --watch --smooth # sweeping second hand
 
+./h150i-lcd.py usage --watch          # doomsday token counter (default style)
+./h150i-lcd.py usage money  --watch   # estimated $ spent, as cash on fire
+./h150i-lcd.py usage robot  --watch   # a thirsty robot chugging tokens
+./h150i-lcd.py usage gauge  --watch --cap 5000000   # token "fuel" gauge
+./h150i-lcd.py usage counter --window all           # all-time damage report
+
+sudo ./h150i-lcd.py power --watch     # CPU + GPU watts as an electricity meter
+
 ./h150i-lcd.py brightness 80          # 0-100
 ./h150i-lcd.py rotate 0               # 0,1,2,3 = up / right / down / left
 ```
 
 Colors are hex like `00e070`. `--watch` re-pushes the frame on `--interval`
 seconds so the firmware can't take the screen back; press Ctrl-C to stop.
+
+### `usage` — how much have you asked Claude today?
+
+`usage` reads Claude Code's own session transcripts under `~/.claude/projects/`
+and tallies the tokens. No login or API key — it just totals what's already on
+disk. Styles: `counter` (default), `money`, `robot`, `gauge`. Scope it with
+`--window today` (default), `24h`, or `all`.
+
+Because HID writes usually need root, this typically runs under `sudo` — where
+`~` would resolve to `/root` and find nothing. It handles that automatically by
+falling back to the `sudo`-invoking user's home. If it still shows `0`, point it
+at your config dir explicitly with `--claude-dir /home/you/.claude` (or set
+`CLAUDE_CONFIG_DIR`). A run that finds no transcripts prints a hint to stderr.
+
+The dollar figure in the `money` and `counter` styles is a **tongue-in-cheek
+estimate** from public per-token rates — on a subscription plan it is not your
+real bill.
+
+### `power` — what is the machine drawing?
+
+`power` adds up the two sensors Linux exposes without extra tools: CPU package
+power from the RAPL energy counters (`/sys/class/powercap/intel-rapl:*`, which
+also covers AMD Zen) and GPU power from `amdgpu` hwmon or `nvidia-smi`. The
+headline is **CPU + GPU**, not wall power — the motherboard, RAM, drives, fans
+and PSU losses have no sensor.
+
+The face reads like an electricity meter. The aluminium disc in the window turns
+once per 2 Wh, so it spins faster as the load goes up. The register below
+counts the Wh used since the display started, and its red tenths drum rolls
+between digits.
+
+RAPL counters are root-only, so run it with `sudo` (or as the systemd service).
+Without root it prints a warning and shows the GPU only.
 
 Run `./h150i-lcd.py --help` (or `<command> --help`) for all options.
 
