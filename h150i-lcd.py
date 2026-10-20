@@ -789,13 +789,20 @@ class PowerSampler:
         return sum(watts) if watts else None
 
 
-def _tracked(d, text, font, cx, cy, fill, track):
-    """Letter-spaced text centered on (cx, cy) — Pillow has no tracking control."""
-    widths = [d.textlength(ch, font=font) for ch in text]
-    x = cx - (sum(widths) + track * (len(text) - 1)) / 2
-    for ch, w in zip(text, widths):
+def _tracked(d, parts, font, cx, cy, track):
+    """Letter-spaced run of (text, fill) parts centered on (cx, cy) — Pillow has
+    no tracking control."""
+    chars = [(ch, fill) for text, fill in parts for ch in text]
+    widths = [d.textlength(ch, font=font) for ch, _ in chars]
+    x = cx - (sum(widths) + track * (len(chars) - 1)) / 2
+    for (ch, fill), w in zip(chars, widths):
         d.text((x, cy), ch, font=font, fill=fill, anchor="lm")
         x += w + track
+
+
+def _money(pence):
+    """1234.5 -> '£12.35'; under a pound stays in pence so small sums still move."""
+    return f"£{pence / 100:,.2f}" if pence >= 100 else f"{pence:.1f}p"
 
 
 def _gradient(size, values, vertical):
@@ -853,10 +860,11 @@ def _register_wheel(w, h, value, ss, face, ink):
     return ImageChops.multiply(wheel, Image.merge("RGB", (shade, shade, shade)))
 
 
-def render_power(cpu, gpu, wh, since, bg=BAKELITE, accent=COPPER):
+def render_power(cpu, gpu, wh, since, bg=BAKELITE, accent=COPPER, pence=None, pence_per_hour=None):
     """Electricity-meter face: CPU + GPU watts, a disc turning with the energy
-    used, and a register of Wh consumed since `since`. cpu/gpu may be None
-    (sensor missing or unreadable). Supersampled 2x."""
+    used, a register of Wh consumed since `since`, and (if pence is given) the
+    cost so far and current cost per hour. cpu/gpu may be None (sensor missing
+    or unreadable). Supersampled 2x."""
     ss = 2
     W = IMG_W * ss
     cx = cy = W / 2.0
@@ -876,8 +884,8 @@ def render_power(cpu, gpu, wh, since, bg=BAKELITE, accent=COPPER):
     label_font = load_font(int(W * 0.036), POWER_LABEL_FONTS)
     for name, val, col, side in (("CPU", cpu, accent, -1), ("GPU", gpu, VERDIGRIS, 1)):
         txt = f"{name}  {val:.0f} W" if val is not None else f"{name}  —"
-        _tracked(d, txt, label_font, cx + side * r * 0.31, cy - r * 0.64,
-                 col if val is not None else PLATE, ss * 2)
+        _tracked(d, [(txt, col if val is not None else PLATE)], label_font,
+                 cx + side * r * 0.31, cy - r * 0.64, ss * 2)
 
     # Headline wattage, unit set on the same baseline.
     num_font = load_font(int(W * 0.235), POWER_DISPLAY_FONTS)
@@ -928,15 +936,20 @@ def render_power(cpu, gpu, wh, since, bg=BAKELITE, accent=COPPER):
         img.paste(wheel, (rx + i * (rw + rgap), ry), wmask)
 
     plate_font = load_font(int(W * 0.032), POWER_LABEL_FONTS)
-    _tracked(d, f"Wh SINCE {since.strftime('%H:%M')}", plate_font, cx, cy + r * 0.69, PLATE, ss * 3)
-    _tracked(d, f"1 REV = {POWER_WH_PER_REV:g} Wh", plate_font, cx, cy + r * 0.81,
-             _lerp(bg, PLATE, 0.6), ss * 3)
+    started = since.strftime("%H:%M" if since.date() == datetime.now().date() else "%d %b").upper()
+    _tracked(d, [(f"Wh SINCE {started}", PLATE)], plate_font, cx, cy + r * 0.67, ss * 3)
+    if pence is not None:
+        cost_font = load_font(int(W * 0.044), POWER_LABEL_FONTS)
+        _tracked(d, [(_money(pence), IVORY), ("  ·  ", PLATE), (f"{pence_per_hour:.1f}p/h", accent)],
+                 cost_font, cx, cy + r * 0.80, ss * 2)
     return img.resize((IMG_W, IMG_H), Image.LANCZOS)
 
 
-def make_power_renderer(bg, accent):
+def make_power_renderer(bg, accent, rate=24.49, standing=42.21):
     """Return a zero-arg callable producing a fresh JPEG of current power draw.
-    It integrates watts over time between calls to drive the disc and register."""
+    It integrates watts over time between calls to drive the disc and register.
+    rate is the unit price in pence/kWh; standing is pence/day, apportioned by
+    elapsed time so the cost line matches what the bill would charge."""
     sampler = PowerSampler()
     if not sampler.rapl and not sampler.gpu_files and not sampler.nvidia_smi:
         sys.exit("No power sensors found (no RAPL zones under /sys/class/powercap, "
@@ -945,14 +958,19 @@ def make_power_renderer(bg, accent):
         print("Warning: CPU power needs root (RAPL energy counters are root-only); "
               "showing GPU only.", file=sys.stderr)
     sampler.cpu_watts()                          # prime the energy counters
-    state = {"wh": 0.0, "t": time.monotonic(), "since": datetime.now()}
+    t0 = time.monotonic()
+    state = {"wh": 0.0, "t": t0, "since": datetime.now()}
 
     def render():
         cpu, gpu = sampler.cpu_watts(), sampler.gpu_watts()
         now = time.monotonic()
-        state["wh"] += sum(p for p in (cpu, gpu) if p is not None) * (now - state["t"]) / 3600.0
+        watts = sum(p for p in (cpu, gpu) if p is not None)
+        state["wh"] += watts * (now - state["t"]) / 3600.0
         state["t"] = now
-        return image_to_jpeg(render_power(cpu, gpu, state["wh"], state["since"], bg, accent))
+        pence = state["wh"] / 1000.0 * rate + standing * (now - t0) / 86400.0
+        pence_per_hour = watts / 1000.0 * rate + standing / 24.0
+        return image_to_jpeg(render_power(cpu, gpu, state["wh"], state["since"], bg, accent,
+                                          pence, pence_per_hour))
     return render
 
 
@@ -1098,6 +1116,11 @@ def main():
                      help="keep updating live (recommended; the disc and register need it)")
     ppw.add_argument("--interval", type=float, default=1.0,
                      help="seconds between updates (default 1.0)")
+    ppw.add_argument("--rate", type=float, default=24.49,
+                     help="electricity unit rate in pence/kWh (default 24.49)")
+    ppw.add_argument("--standing", type=float, default=42.21,
+                     help="standing charge in pence/day, apportioned by time (default 42.21; "
+                          "0 for the PC's running cost alone)")
 
     args = p.parse_args()
 
@@ -1158,7 +1181,8 @@ def main():
             render = make_usage_renderer(args.style, args.window, bg, accent, args.cap)
             watch_render(h, render, args.interval) if args.watch else send_frame(h, render())
         elif args.cmd == "power":
-            render = make_power_renderer(hex_color(args.bg, BAKELITE), hex_color(args.accent, COPPER))
+            render = make_power_renderer(hex_color(args.bg, BAKELITE), hex_color(args.accent, COPPER),
+                                         args.rate, args.standing)
             if args.watch:
                 watch_render(h, render, args.interval)
             else:

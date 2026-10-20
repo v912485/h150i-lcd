@@ -108,6 +108,11 @@ once per 2 Wh, so it spins faster as the load goes up. The register below
 counts the Wh used since the display started, and its red tenths drum rolls
 between digits.
 
+Below the register are the cost so far and the current cost per hour. Both
+include the standing charge, spread over the elapsed time. Set your tariff with
+`--rate` (pence/kWh, default 24.49) and `--standing` (pence/day, default 42.21).
+Use `--standing 0` to see the PC's running cost alone.
+
 RAPL counters are root-only, so run it with `sudo` (or as the systemd service).
 Without root it prints a warning and shows the GPU only.
 
